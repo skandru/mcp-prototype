@@ -1,24 +1,22 @@
-"""Smoke tests for the example MCP server.
-
-These verify the server imports and every submodule registers without error.
-Add functional tests for your own tools as you build them.
-"""
+"""Smoke tests: the server imports and every submodule registers."""
 
 from __future__ import annotations
 
 import pytest
 from fastmcp import FastMCP
 
-from example_server.app import mcp
-from example_server.config import settings
+from waterboards_mcp.app import mcp
+from waterboards_mcp.config import settings
 
-
-def test_server_is_importable():
-    assert mcp is not None
-
-
-def test_server_has_name():
-    assert mcp.name == "Example MCP Server"
+EXPECTED_TOOLS = {
+    "waterboards_list_datasets",
+    "waterboards_find_water_systems_near_zip",
+    "waterboards_get_water_system",
+    "waterboards_get_source_chemistry_near_zip",
+    "waterboards_get_system_source_chemistry",
+    "waterboards_get_school_lead_near_zip",
+    "waterboards_get_tap_water_for_zip",
+}
 
 
 def test_default_transport_is_stdio():
@@ -26,33 +24,13 @@ def test_default_transport_is_stdio():
     assert settings.mcp_transport == "stdio"
 
 
-def test_tools_register_without_error():
-    from example_server.tools import register_tools
-
-    register_tools(FastMCP("test"))  # must not raise
-
-
-def test_prompts_register_without_error():
-    from example_server.prompts import register_prompts
-
-    register_prompts(FastMCP("test"))  # must not raise
+@pytest.mark.parametrize("name", ["tools", "prompts", "resources", "routes"])
+def test_submodules_register_without_error(name: str):
+    module = __import__(f"waterboards_mcp.{name}", fromlist=["register"])
+    getattr(module, f"register_{name}")(FastMCP("test"))
 
 
-def test_resources_register_without_error():
-    from example_server.resources import register_resources
-
-    register_resources(FastMCP("test"))  # must not raise
-
-
-def test_routes_register_without_error():
-    from example_server.routes import register_routes
-
-    register_routes(FastMCP("test"))  # must not raise
-
-
-@pytest.mark.asyncio
-async def test_example_tool_is_discoverable():
-    """The example tool should be registered and discoverable via the MCP API."""
-    tools = await mcp.list_tools()
-    tool_names = {t.name for t in tools}
-    assert "example_search_datasets" in tool_names
+async def test_tools_are_discoverable_and_read_only():
+    tools = {t.name: t for t in await mcp.list_tools()}
+    assert set(tools) == EXPECTED_TOOLS
+    assert all(t.annotations.readOnlyHint for t in tools.values())

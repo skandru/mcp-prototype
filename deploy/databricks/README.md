@@ -8,7 +8,7 @@ and exposes it behind your workspace's authentication.
 - **Port:** Databricks injects `DATABRICKS_APP_PORT` (defaults to `8000`); this
   template's `app.py` detects it and serves HTTP automatically — no code changes.
 
-> **How the template already supports this:** `src/example_server/app.py` checks
+> **How the template already supports this:** `src/waterboards_mcp/app.py` checks
 > for `DATABRICKS_APP_PORT` (and generic `PORT`) and switches to streamable-HTTP
 > on that port. That's the only wiring Databricks Apps needs.
 
@@ -21,8 +21,21 @@ and exposes it behind your workspace's authentication.
 | `DATABRICKS_CLIENT_ID` | Service principal client ID |
 | `DATABRICKS_CLIENT_SECRET` | OAuth secret |
 
-The last three are available if your tools need to call back into Databricks
-(e.g. query a table). The example tool doesn't use them.
+The last three are used by the Databricks SDK in `warehouse.py` to query the
+Gold views as the app's service principal.
+
+## Part 0 — Grant the app access to data
+
+1. In the Apps UI (Configure → Add resource), attach your **SQL warehouse** with
+   *Can use*, using resource key `sql-warehouse` (referenced in `app.yaml`).
+2. Grant the app's service principal read-only access to the Gold schema only:
+
+```sql
+GRANT USE CATALOG ON CATALOG users TO `<app-service-principal>`;
+GRANT USE SCHEMA, SELECT ON SCHEMA users.suresh_kandru TO `<app-service-principal>`;
+```
+
+No tokens are stored; the SDK authenticates with the injected OAuth credentials.
 
 ---
 
@@ -107,7 +120,7 @@ DATABRICKS_TOKEN="$(databricks auth token --output json | jq -r .access_token)" 
 ## Part 3 — Connect a client
 
 Databricks Apps are gated by workspace auth, so an MCP client must present a
-bearer token. For **watsonx Orchestrate** or **Claude** (remote HTTP), register
+bearer token. For **Claude** or an agent platform (remote HTTP), register
 the endpoint and supply the token as an `Authorization: Bearer <token>` header
 via the client's connection/credential mechanism.
 
@@ -116,7 +129,7 @@ For a quick local test with an MCP client that supports HTTP + headers:
 ```json
 {
   "mcpServers": {
-    "example-mcp": {
+    "waterboards-mcp": {
       "type": "http",
       "url": "https://<app-url>/mcp",
       "headers": { "Authorization": "Bearer <DATABRICKS_TOKEN>" }
@@ -156,7 +169,7 @@ databricks apps delete "${APP_NAME}"
 - **Auth-gated by default:** Databricks Apps sit behind workspace SSO/OAuth, so
   unauthenticated probes return 302/401 — that's expected, not a failure. Use a
   bearer token to reach the app programmatically.
-- **Renamed package:** if you renamed `example_server`, update the module path in
+- **Renamed package:** if you renamed `waterboards_mcp`, update the module path in
   `app.yaml` (`python -m <your_pkg>.app`).
 - **`app.yaml` location:** Databricks reads `app.yaml` from the deployed source
   root. The deploy script stages this kit's copy at the repo root for the sync

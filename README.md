@@ -1,172 +1,110 @@
-# GSA MCP Hackathon — Server Template
+# Waterboards MCP Server
 
-A ready-to-run starter for building a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server in Python, plus deployment kits for **IBM Cloud (watsonx Orchestrate)** and **Databricks**.
+An [MCP](https://modelcontextprotocol.io) server that answers California **drinking water** questions — public water systems and their SAFER risk/violation status, source-water chemistry, and school lead results, by ZIP code or water system ID — from curated **Databricks Gold views** over State Water Board open data (data.ca.gov). Built with [FastMCP](https://github.com/jlowin/fastmcp) and [uv](https://docs.astral.sh/uv/); deployed as a **Databricks App**.
 
-Built with [FastMCP](https://github.com/jlowin/fastmcp) and [uv](https://docs.astral.sh/uv/). If you have never built an MCP server before, start with **[QUICKSTART.md](QUICKSTART.md)**.
+Design decisions and the review of the original plan: [req/mcp_design_review.md](req/mcp_design_review.md) (local, git-ignored).
 
----
-
-## What is an MCP server?
-
-An MCP server exposes **tools** (functions the model can call), **prompts** (reusable conversation starters), and **resources** (data the model can read) to an AI client such as Claude Desktop, Claude Code, or an agent platform like watsonx Orchestrate. You write the tools; the client's model decides when to call them.
-
-This template gives you a working server with one example of each, so you can replace the examples with your own service and deploy.
-
----
-
-## Repo structure
+## Architecture
 
 ```
-mcp-hackathon-template/
-├── README.md                  # This file
-├── QUICKSTART.md              # 5-minute clone → run → connect walkthrough
-├── main.py                    # Local entry point (uv run python main.py)
-├── pyproject.toml             # Package + dependencies (uv)
-├── requirements.txt           # Mirror of runtime deps (for buildpack hosts)
-├── Dockerfile                 # Container image (streamable-HTTP, port 8080)
-├── manifest.yaml              # cloud.gov (Cloud Foundry) deploy
-├── server.json                # MCP registry metadata
-├── .env.example               # Copy to .env for local dev
-├── .github/workflows/ci.yml   # Lint + test on push/PR
-├── src/
-│   └── example_server/        # ← rename to your service
-│       ├── app.py             # Thin entry point: builds FastMCP, picks transport
-│       ├── config.py          # Settings from env vars / .env
-│       ├── models.py          # Pydantic models & enums for tool params
-│       ├── utils.py           # Shared helpers (HTTP client, pagination)
-│       ├── routes.py          # HTTP-only routes (/health, /version)
-│       ├── tools/             # ONE FILE PER TOOL
-│       │   ├── __init__.py    #   register_tools(mcp) aggregator
-│       │   └── example_tool.py
-│       ├── prompts/
-│       │   ├── __init__.py    #   register_prompts(mcp) aggregator
-│       │   └── example.py
-│       └── resources/
-│           ├── __init__.py    #   register_resources(mcp) aggregator
-│           └── example.py
-├── tests/                     # Import + registration smoke tests
-├── eval/                      # Stub → build a Phoenix eval harness (see mcp-eval skill)
-└── deploy/
-    ├── README.md              # Which deployment kit to use
-    ├── ibm/                   # watsonx Orchestrate: 3 kits (see below)
-    └── databricks/            # Databricks Apps kit
+data.ca.gov drinking water files (+ Census ZCTA centroids)
+   └─ sql/drinking_water/  Bronze → Silver → Gold   (run in a Databricks SQL warehouse)
+        └─ users.suresh_kandru.v_* views  (the contract in this README)
+             └─ Databricks SQL warehouse
+                  └─ this server (FastMCP, Databricks Apps, /mcp over HTTP)
+                       └─ MCP client / agent
 ```
 
----
+The server is read-only and queries **only** `<catalog>.<schema>.v_*` Gold views (plus `information_schema` for dataset discovery). Every caller-supplied value is bound as a named SQL parameter.
 
-## Getting started
+## Data pipeline
 
-### Prerequisites
-- [uv](https://docs.astral.sh/uv/) — `pip install uv` or `brew install uv`
+`scripts/download_drinking_water_data.py` downloads the source files. Upload them (plus the Census ZCTA gazetteer as `zcta_centroids.txt`) to `/Volumes/users/suresh_kandru/raw/drinking_water/current/`, then run in order:
 
-### Install and run
+| Script | Layer | Output |
+|---|---|---|
+| `sql/drinking_water/00_setup.sql` | setup | volume, `silver_clean_str` helper |
+| `sql/drinking_water/01_bronze.sql` | Bronze | raw all-string tables `bronze_dw_*`, `bronze_zcta_centroids` |
+| `sql/drinking_water/02_silver.sql` | Silver | typed `dw_systems`, `dw_safer`, `dw_lead_schools`, `dw_source_chemistry(_latest)`, `dw_wells`, and 50 km ZIP pair tables |
+| `sql/drinking_water/03_gold.sql` | Gold | the `v_*` views below |
+| `sql/drinking_water/04_tap_water.sql` | Bronze/Silver/Gold | DDW SDWIS tap-water results and ZIP-to-service-area lookup → `v_tap_water_for_zip`. Inputs `tap_water_results.csv.gz` and `zip_service_areas.csv` are built by `scripts/build_tap_water_results.py` and `scripts/build_zip_service_areas.py` |
+
+Silver turns `NULL`/`NaN`/`N/A` into SQL NULL, parses dates, keeps non-detects explicit (`is_non_detect`, `result_numeric` NULL, `reporting_limit`), and drops street addresses. Systems are located by SAFER coordinates, wells by their own coordinates, and schools by the ZIP parsed from their address.
+
+## Tools
+
+| Tool | Gold view | Purpose |
+|---|---|---|
+| `waterboards_list_datasets` | `information_schema.tables` | What datasets are available |
+| `waterboards_find_water_systems_near_zip` | `v_water_systems_near_zip` | Water systems near a ZIP, optionally only failing/at-risk/violating |
+| `waterboards_get_water_system` | `v_water_systems` | Profile, SAFER status, violations for one `pws_id` |
+| `waterboards_get_source_chemistry_near_zip` | `v_source_chemistry_near_zip` | Latest well chemistry near a ZIP, filter by chemical |
+| `waterboards_get_system_source_chemistry` | `v_source_chemistry_latest` | Latest well chemistry for one `pws_id` |
+| `waterboards_get_school_lead_near_zip` | `v_school_lead_near_zip` | School lead sampling near a ZIP |
+| `waterboards_get_tap_water_for_zip` | `v_tap_water_for_zip` | Latest tap/treated-water sample results for the systems serving a ZIP |
+
+All return `{results, count, offset, has_more, next_offset, source, retrieved_at}`, or `{error, hint}`. Empty results include an actionable `hint`.
+
+### Gold view contract
+
+The views must exist with at least these columns (the server does `SELECT *` then filters/orders on them):
+
+| View | Required columns |
+|---|---|
+| `v_water_systems` | `pws_id, system_name, safer_status, is_failing, has_primary_mcl_violation, has_ecoli_violation, has_treatment_technique_violation, data_as_of, source_url` + profile/risk columns |
+| `v_water_systems_near_zip` | `zip, distance_km` + all `v_water_systems` columns |
+| `v_source_chemistry_latest` | `pws_id, well_id, chemical_name, is_non_detect, result_numeric, units, reporting_limit, last_observed, source_url` |
+| `v_source_chemistry_near_zip` | `zip, distance_km` + all `v_source_chemistry_latest` columns |
+| `v_tap_water_for_zip` | `zip, pct_of_zip_covered, pws_id, system_name, water_stage, analyte_name, result_numeric, units, is_non_detect, mcl, exceeds_mcl, last_observed, source_url` |
+| `v_school_lead_near_zip` | `zip, distance_km, school_name, action_level_exceeded, result_numeric, last_observed, source_url` + school/system columns |
+
+`zip` + `distance_km` are precomputed (pairs up to 50 km), so the server filters `distance_km <= :radius_km` rather than doing geospatial math per request. Keep PII (street addresses, phone numbers) out of Gold.
+## Run locally
 
 ```bash
-cp .env.example .env
-uv sync
-uv run python main.py
-```
-
-The server starts in **stdio** mode — it talks JSON-RPC over stdin/stdout, which is how local clients (Claude Desktop, Claude Code) launch it. See [QUICKSTART.md](QUICKSTART.md) to connect a client.
-
-### Verify
-
-```bash
+cp .env.example .env          # set DATABRICKS_SQL_WAREHOUSE_ID
+databricks auth login --host https://<workspace>.cloud.databricks.com
 uv sync --group dev
-uv run pytest tests/ -v      # tests
-uv run ruff check .          # lint
+uv run python main.py         # stdio
 ```
 
----
+Local auth uses the Databricks SDK's unified auth (CLI profile via `DATABRICKS_CONFIG_PROFILE`, or `DATABRICKS_HOST` + `DATABRICKS_TOKEN`). Connect a client with an entry like:
 
-## The one-tool-per-file pattern
-
-Each tool lives in its own file under `src/example_server/tools/` and exposes a `register(mcp)` function. `tools/__init__.py` calls each one from a single `register_tools(mcp)`. This keeps the tool list scannable and lets you add or remove an integration by touching two files.
-
-**Step 1 — create `src/example_server/tools/my_tool.py`:**
-
-```python
-from typing import Annotated
-from urllib.parse import quote
-from fastmcp import FastMCP
-
-from example_server.utils import fetch_json
-
-
-def register(mcp: FastMCP) -> None:
-    @mcp.tool(
-        name="example_get_thing",
-        annotations={
-            "title": "Get a thing",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": True,
-        },
-    )
-    async def get_thing(thing_id: Annotated[str, "The ID to fetch."]) -> dict:
-        """One-line summary. Document the data source, its update cadence,
-        and the return shape here — the model reads this docstring."""
-        safe_id = quote(thing_id, safe="")
-        return await fetch_json(f"things/{safe_id}")
+```json
+{
+  "mcpServers": {
+    "waterboards": {
+      "command": "uv",
+      "args": ["run", "waterboards-mcp"],
+      "cwd": "/absolute/path/to/this/repo"
+    }
+  }
+}
 ```
 
-**Step 2 — wire it up in `tools/__init__.py`:**
+HTTP mode (what Databricks Apps runs): `MCP_TRANSPORT=streamable-http uv run python main.py`, then `curl localhost:8000/health`.
 
-```python
-from example_server.tools import example_tool, my_tool
+## Verify
 
-def register_tools(mcp) -> None:
-    example_tool.register(mcp)
-    my_tool.register(mcp)  # ← add this line
+```bash
+uv run pytest tests/ -v
+uv run ruff check . && uv run ruff format --check .
 ```
 
-**Step 3 — add any API key** as a typed field in `config.py` and document the env var in `.env.example`.
+Tests mock the Databricks SDK; no workspace is needed.
 
-Prompts (`prompts/`) and resources (`resources/`) follow the exact same `register(mcp)` + aggregator pattern.
+## Add a tool
 
----
+One tool per file in `src/waterboards_mcp/tools/`, exposing `register(mcp)`; add it to `register_tools` in `tools/__init__.py`. Use `ZipCode`/`RadiusKm`/`PaginationParams` from `models.py` for validated inputs and call `warehouse.query_gold(...)` with static `where`/`order_by` SQL and `Param`s for values. Document source, refresh cadence, and result shape in the docstring — the model reads it.
 
-## Rename the package
+## Deploy
 
-Before publishing your server, rename `example_server` to your service (e.g. `census_mcp`):
+See [deploy/databricks/README.md](deploy/databricks/README.md).
 
-1. Rename the folder `src/example_server/` → `src/<your_name>/`.
-2. Update `pyproject.toml`: the `[project].name`, `[project.scripts]`, and `[tool.hatch.build.targets.wheel].packages`.
-3. Find-and-replace `example_server` across `src/`, `tests/`, `main.py`, `Dockerfile`, and `manifest.yaml`.
+## Evaluate
 
----
-
-## Tool design tips (federal data)
-
-- **Return structured data, not prose.** Return dicts/lists with consistent keys and let the model narrate.
-- **Document freshness.** Federal datasets lag; state the update frequency and "as-of" date in the docstring.
-- **Expose pagination.** Use `PaginationParams` / `paginate()` from `utils.py`, and return `has_more` / `next_offset`.
-- **Use explicit timeouts.** `utils.fetch_json` defaults to 30s.
-- **Actionable errors.** Return an error dict with a `hint`, not a raw stack trace.
-- **Constrain outbound requests.** Keep API origins in operator-controlled code or configuration, pass only validated relative paths to `fetch_json`, and encode path segments. Never pass a tool-supplied URL directly to an HTTP client.
-- **Treat redirects and DNS as security boundaries.** Redirects are disabled by default. A server that must fetch caller-supplied URLs needs connection-time IP validation on every hop plus network egress controls; a one-time DNS check is not sufficient.
-- **Keep sensitive data out of errors and logs.** Do not expose or log upstream bodies, headers, full URLs, query strings, credentials, stack traces, SSNs, dates of birth, or addresses.
-
----
-
-## Deploying
-
-Local development uses stdio. To share your server with an agent platform, deploy it and register it. See **[deploy/README.md](deploy/README.md)** for a chooser, then:
-
-- **IBM watsonx Orchestrate** — [deploy/ibm/](deploy/ibm/) (three kits: local stdio toolkit, Code Engine build-from-Git, and prebuilt image).
-- **Databricks Apps** — [deploy/databricks/](deploy/databricks/).
-
-Both read the same server code; `app.py` automatically serves HTTP when the platform injects a port.
-
----
-
-## Evaluations
-
-Measuring how well an LLM can use your tools is the real test of server quality. This template intentionally does **not** ship an eval harness — see [eval/README.md](eval/README.md) for how to build one with the `mcp-eval` skill.
-
----
+See [eval/README.md](eval/README.md) and the `mcp-eval` skill.
 
 ## License
 
-[MIT](LICENSE). See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy and hackathon security notes.
+See [LICENSE](LICENSE).

@@ -39,4 +39,7 @@ htmlcov/
 .idea/
 .zed/
 *.swp
+/req
+/issues
+/datasets
 

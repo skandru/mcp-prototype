@@ -19,10 +19,22 @@
 # src/ on PYTHONPATH and launch it as a module; app.py sees DATABRICKS_APP_PORT
 # and automatically serves streamable-HTTP on that port with /mcp and /health.
 #
-# If you renamed the `example_server` package, update the module path below.
+# If you renamed the `waterboards_mcp` package, update the module path below.
 command:
   [
     "/bin/sh",
     "-c",
-    "export PYTHONPATH=/app/python/source_code/src:$PYTHONPATH && python -m example_server.app",
+    "export PYTHONPATH=/app/python/source_code/src:$PYTHONPATH && python -m waterboards_mcp.app",
   ]
+
+# The SQL warehouse is attached to the app as a resource named `sql-warehouse`
+# (Apps UI → Configure → Add resource → SQL warehouse → "Can use"). The app's
+# service principal also needs SELECT on the Gold schema; see
+# deploy/databricks/README.md.
+env:
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: DATABRICKS_CATALOG
+    value: users
+  - name: DATABRICKS_SCHEMA
+    value: suresh_kandru

@@ -4,10 +4,10 @@ Run locally:
     uv run python main.py
 
 Or via the installed script:
-    uv run example-server
+    uv run waterboards-mcp
 """
 
-from example_server.app import main
+from waterboards_mcp.app import main
 
 if __name__ == "__main__":
     main()

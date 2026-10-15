@@ -1,0 +1,5 @@
+streamlit>=1.40
+openai>=1.50
+pandas>=2.0
+fastmcp>=2.0.0
+databricks-sdk>=0.152.0

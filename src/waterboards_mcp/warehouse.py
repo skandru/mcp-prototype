@@ -133,6 +133,39 @@ def _execute(statement: str, params: list[Param]) -> list[dict[str, Any]]:
     ]
 
 
+_DATA_CA_GOV = "California State Water Board open data (data.ca.gov)"
+_SOURCES = {
+    "v_water_systems": f"{_DATA_CA_GOV}: Drinking Water Public Water Systems (SDWIS)",
+    "v_water_systems_near_zip": (
+        f"{_DATA_CA_GOV}: Drinking Water Public Water Systems (SDWIS), "
+        "SAFER risk assessment; ZIP locations from US Census ZCTA Gazetteer"
+    ),
+    "v_school_lead_near_zip": (
+        f"{_DATA_CA_GOV}: Lead Sampling in California Schools; "
+        "ZIP locations from US Census ZCTA Gazetteer"
+    ),
+    "v_source_chemistry_near_zip": (
+        f"{_DATA_CA_GOV}: DDW Drinking Water Source Chemistry (GAMA); "
+        "ZIP locations from US Census ZCTA Gazetteer"
+    ),
+    "v_source_chemistry_latest": (
+        f"{_DATA_CA_GOV}: DDW Drinking Water Source Chemistry (GAMA)"
+    ),
+    "v_tap_water_for_zip": (
+        "California State Water Board DDW SDWIS water quality monitoring results; "
+        "ZIP-to-system mapping from ZIP and water-system service-area boundaries"
+    ),
+}
+
+
+def _source_label(relation: str) -> str:
+    """Describe the public dataset behind a relation, not the internal view."""
+    name = relation.rsplit(".", 1)[-1]
+    if name == "tables" and relation.endswith("information_schema.tables"):
+        return "Server catalog of available datasets"
+    return _SOURCES.get(name, _DATA_CA_GOV)
+
+
 async def query_gold(
     relation: str,
     *,
@@ -176,7 +209,7 @@ async def query_gold(
         "offset": pagination.offset,
         "has_more": has_more,
         "next_offset": pagination.offset + len(page) if has_more else None,
-        "source": f"Databricks SQL: {relation}",
+        "source": _source_label(relation),
         "retrieved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     if not page and pagination.offset == 0:

@@ -126,6 +126,16 @@ async def test_pagination_reports_next_page(fake_warehouse):
     assert data["next_offset"] == 20
 
 
+async def test_source_names_public_dataset_not_internal_view(fake_warehouse):
+    fake_warehouse(_response([("siteid", "STRING")], [["1"]]))
+
+    data = await _call("waterboards_find_water_systems_near_zip", {"zip_code": "94103"})
+
+    assert "data.ca.gov" in data["source"]
+    assert "v_water_systems_near_zip" not in data["source"]
+    assert "users" not in data["source"]
+
+
 async def test_empty_result_returns_actionable_hint(fake_warehouse):
     fake_warehouse(_response([("siteid", "STRING")], []))
 

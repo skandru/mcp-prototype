@@ -43,3 +43,6 @@ htmlcov/
 /issues
 /datasets
 
+
+# Databricks CLI sync state
+.databricks/

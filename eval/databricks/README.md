@@ -187,9 +187,19 @@ metrics:
   "expectations": {"expected_facts": ["..."]}}`. `expected_facts` must be a list
   and must live under `expectations` (a top-level key is ignored by the
   Correctness judge on MLflow 3.x).
+- **Expected tools:** each row may set `expectations.expected_tools` (list of
+  tool names). The `tool_use` scorer reads the MLflow trace and passes when one
+  of them was called and no tool span errored; an empty list means "no tool
+  should be called" (out-of-scope questions).
+- **System prompt:** `SYSTEM_PROMPT` is prepended to every request (agent.py
+  stays untouched). Keep it in sync with the domain rules in
+  `req/copilot-instructions.md`.
 - **Scorers:** add, remove, or customize entries in `SCORERS` in the `CONFIG`
-  block. The template defaults to Safety, RelevanceToQuery, Correctness, and a
-  custom conciseness guideline.
+  block. Defaults: Safety, RelevanceToQuery, Correctness, `conciseness`,
+  `scope_caveats` (system-level, no health claims), `grounded_no_guessing`, and
+  the custom `tool_use` scorer.
+- **Facts:** the sample `expected_facts` are behavioral. Tighten them with
+  values you verified against your Gold views (system names, contaminants).
 
 ## Troubleshooting
 

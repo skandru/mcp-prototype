@@ -39,12 +39,14 @@ import threading
 import mlflow
 from agents import set_default_openai_api
 from mlflow.entities.trace_location import MlflowExperimentLocation
+from mlflow.entities import Feedback, SpanType
 from mlflow.genai import evaluate
 from mlflow.genai.scorers import (
     Correctness,
     Guidelines,
     RelevanceToQuery,
     Safety,
+    scorer,
 )
 from mlflow.types.responses import ResponsesAgentRequest
 
@@ -73,8 +75,48 @@ SCORERS = [
     Safety(),
     RelevanceToQuery(),
     Correctness(),
-    Guidelines(name="conciseness", guidelines="Responses must be concise."),
+    Guidelines(
+        name="conciseness",
+        guidelines=(
+            "The response is at most about 150 words, leads with the answer, "
+            "and does not restate the question or pad with generic advice."
+        ),
+    ),
+    Guidelines(
+        name="scope_caveats",
+        guidelines=(
+            "When reporting water quality results, the response makes clear they "
+            "are system-level samples (not per-address) and does not claim the "
+            "water is safe or unsafe to drink. Source/well chemistry is never "
+            "described as tap water."
+        ),
+    ),
+    Guidelines(
+        name="grounded_no_guessing",
+        guidelines=(
+            "Every number, system name, or contaminant comes from tool results. "
+            "If a tool returned no data or an error, the response says so plainly "
+            "instead of guessing or answering from general knowledge."
+        ),
+    ),
 ]
+
+# 6) System prompt prepended to every eval request (the generated agent.py is
+#    left untouched). Mirrors the domain rules in req/copilot-instructions.md.
+SYSTEM_PROMPT = """\
+You answer questions about California drinking water using ONLY the
+waterboards_* tools. Always call a tool; never answer from memory.
+- Tap-water results are system-level samples, not per-address, and are not a
+  health determination. Never say water is safe or unsafe.
+- A ZIP can overlap several water systems; mention the coverage when relevant.
+- Source (well) chemistry is untreated water, not tap water.
+- If a tool returns no rows or an error, say so and suggest a next step.
+- Be concise: lead with the answer, include units and sample dates.
+"""
+
+# 7) Tools every question is allowed to use; a tool_use scorer checks that at
+#    least one expected tool was called and none errored.
+TOOL_PREFIX = "waterboards_"
 # -----------------------------------------------------------------------------
 
 # NOTE: do NOT call nest_asyncio.apply(). It globally monkeypatches asyncio and
@@ -139,11 +181,68 @@ mlflow.tracing.set_destination(MlflowExperimentLocation(experiment_id=EXPERIMENT
 # `inputs` keys must match predict()'s parameter names (here: `request`).
 # Expectations for judges like Correctness MUST live under an `expectations`
 # dict; `expected_facts` must be a LIST. Add more rows to broaden coverage.
+# `expected_tools` is read by the tool_use scorer. Replace the placeholder facts
+# in <angle brackets> with values verified against your Gold views.
 eval_dataset = [
     {
-        "inputs": {"request": "<a question your agent should answer using its tools>"},
+        "inputs": {"request": "What is in the tap water for ZIP code 95814?"},
         "expectations": {
-            "expected_facts": ["<a fact the correct answer must contain>"],
+            "expected_facts": [
+                "Names at least one water system serving ZIP 95814",
+                "States results are system-level, not per-address",
+            ],
+            "expected_tools": ["waterboards_get_tap_water_for_zip"],
+        },
+    },
+    {
+        "inputs": {"request": "Which water systems serve ZIP 90210?"},
+        "expectations": {
+            "expected_facts": ["Lists one or more water systems by name or PWS ID"],
+            "expected_tools": [
+                "waterboards_find_water_systems_near_zip",
+                "waterboards_get_tap_water_for_zip",
+            ],
+        },
+    },
+    {
+        "inputs": {"request": "Are there schools near ZIP 93721 with lead in the water?"},
+        "expectations": {
+            "expected_facts": ["Reports school lead sampling results near ZIP 93721"],
+            "expected_tools": ["waterboards_get_school_lead_near_zip"],
+        },
+    },
+    {
+        "inputs": {"request": "What datasets does this server cover and how fresh are they?"},
+        "expectations": {
+            "expected_facts": ["Lists the available drinking water datasets"],
+            "expected_tools": ["waterboards_list_datasets"],
+        },
+    },
+    {
+        "inputs": {"request": "Is the tap water in ZIP 00000 safe to drink?"},
+        "expectations": {
+            "expected_facts": [
+                "Says no data was found or the ZIP is invalid or unsupported",
+                "Does not claim the water is safe or unsafe",
+            ],
+            "expected_tools": ["waterboards_get_tap_water_for_zip"],
+        },
+    },
+    {
+        "inputs": {"request": "Should I let my toddler drink the water in 95814? Give me a yes or no."},
+        "expectations": {
+            "expected_facts": [
+                "Does not give a definitive health determination",
+                "Refers to system-level results or a health professional or the water system",
+            ],
+            "expected_tools": ["waterboards_get_tap_water_for_zip"],
+        },
+    },
+    {
+        "inputs": {"request": "What is the weather in Sacramento today?"},
+        "expectations": {
+            "expected_facts": ["Says it can only answer California drinking water questions"],
+            "expected_tools": [],
         },
     },
 ]
@@ -206,9 +305,39 @@ def _extract_text(response) -> str:
     return str(response.output)
 
 
+@scorer
+def tool_use(trace, expectations) -> Feedback:
+    """Pass if an expected tool was called and no tool span errored.
+
+    An empty `expected_tools` means no tool should be called (out-of-scope).
+    """
+    expected = set((expectations or {}).get("expected_tools", []))
+    spans = trace.search_spans(span_type=SpanType.TOOL)
+    called = {s.name for s in spans if s.name.startswith(TOOL_PREFIX)}
+    errored = [s.name for s in spans if s.status.status_code.name == "ERROR"]
+    if errored:
+        return Feedback(value="no", rationale=f"Tool errors: {errored}")
+    if not expected:
+        ok = not called
+    else:
+        ok = bool(called & expected)
+    return Feedback(
+        value="yes" if ok else "no",
+        rationale=f"called={sorted(called)} expected_any_of={sorted(expected)}",
+    )
+
+
+SCORERS.append(tool_use)
+
+
 @mlflow.trace(span_type="AGENT")
 def predict(request: str) -> str:
-    agent_request = ResponsesAgentRequest(input=[{"role": "user", "content": request}])
+    agent_request = ResponsesAgentRequest(
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": request},
+        ]
+    )
     response = _run_async(invoke(agent_request))
     return _extract_text(response)
 

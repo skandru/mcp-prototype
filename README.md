@@ -58,7 +58,7 @@ The views must exist with at least these columns (the server does `SELECT *` the
 | `v_tap_water_for_zip` | `zip, pct_of_zip_covered, pws_id, system_name, water_stage, analyte_name, result_numeric, units, is_non_detect, mcl, exceeds_mcl, last_observed, source_url` |
 | `v_school_lead_near_zip` | `zip, distance_km, school_name, action_level_exceeded, result_numeric, last_observed, source_url` + school/system columns |
 
-`zip` + `distance_km` are precomputed (pairs up to 50 km), so the server filters `distance_km <= :radius_km` rather than doing geospatial math per request. Keep PII (street addresses, phone numbers) out of Gold.
+`zip` + `distance_km` are precomputed (pairs up to 50 km), so the server filters `distance_km <= :radius_km` (the tools take `radius_miles`, max 31, and convert to km) rather than doing geospatial math per request. Keep PII (street addresses, phone numbers) out of Gold.
 ## Run locally
 
 ```bash
@@ -95,7 +95,7 @@ Tests mock the Databricks SDK; no workspace is needed.
 
 ## Add a tool
 
-One tool per file in `src/waterboards_mcp/tools/`, exposing `register(mcp)`; add it to `register_tools` in `tools/__init__.py`. Use `ZipCode`/`RadiusKm`/`PaginationParams` from `models.py` for validated inputs and call `warehouse.query_gold(...)` with static `where`/`order_by` SQL and `Param`s for values. Document source, refresh cadence, and result shape in the docstring — the model reads it.
+One tool per file in `src/waterboards_mcp/tools/`, exposing `register(mcp)`; add it to `register_tools` in `tools/__init__.py`. Use `ZipCode`/`RadiusMiles`/`PaginationParams` from `models.py` for validated inputs and call `warehouse.query_gold(...)` with static `where`/`order_by` SQL and `Param`s for values. Document source, refresh cadence, and result shape in the docstring — the model reads it.
 
 ## Deploy
 

@@ -19,9 +19,12 @@ ZipCode = Annotated[
     Field(pattern=r"^\d{5}$", description="5-digit US ZIP code, e.g. 94103."),
 ]
 
-RadiusKm = Annotated[
+KM_PER_MILE = 1.609344
+
+# Gold distance pairs are precomputed up to 50 km (~31 miles).
+RadiusMiles = Annotated[
     float,
-    Field(ge=1, le=50, description="Search radius in kilometers (1-50)."),
+    Field(ge=1, le=31, description="Search radius in miles (1-31)."),
 ]
 
 

@@ -10,7 +10,8 @@ from waterboards_mcp.models import (
     ChemicalName,
     PaginationParams,
     PwsId,
-    RadiusKm,
+    KM_PER_MILE,
+    RadiusMiles,
     ZipCode,
 )
 from waterboards_mcp.warehouse import Param, qualified_view, query_gold
@@ -34,7 +35,7 @@ def register(mcp: FastMCP) -> None:
     async def get_source_chemistry_near_zip(
         zip_code: ZipCode,
         chemical: ChemicalName | None = None,
-        radius_km: RadiusKm = 10,
+        radius_miles: RadiusMiles = 10,
         detected_only: bool = False,
         pagination: PaginationParams | None = None,
     ) -> dict[str, Any]:
@@ -69,14 +70,14 @@ def register(mcp: FastMCP) -> None:
             order_by="distance_km ASC, last_observed DESC, well_id, chemical_name",
             params=[
                 Param("zip", zip_code),
-                Param("radius_km", radius_km, "DOUBLE"),
+                Param("radius_km", radius_miles * KM_PER_MILE, "DOUBLE"),
                 Param("chemical", chemical or ""),
                 Param("detected_only", int(detected_only), "INT"),
             ],
             pagination=pagination,
             empty_hint=(
                 "No source chemistry for this ZIP code, radius, and chemical. "
-                "Try a larger radius_km or a shorter chemical name."
+                "Try a larger radius_miles or a shorter chemical name."
             ),
         )
 

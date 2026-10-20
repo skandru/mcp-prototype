@@ -72,7 +72,7 @@ async def test_chemistry_binds_params_and_types_rows(fake_warehouse):
 
     data = await _call(
         "waterboards_get_source_chemistry_near_zip",
-        {"zip_code": "94103", "radius_km": 5, "chemical": "arsenic"},
+        {"zip_code": "94103", "radius_miles": 5, "chemical": "arsenic"},
     )
 
     assert data["results"] == [
@@ -83,7 +83,7 @@ async def test_chemistry_binds_params_and_types_rows(fake_warehouse):
     assert "94103" not in call["statement"]
     assert {p.name: p.value for p in call["parameters"]} == {
         "zip": "94103",
-        "radius_km": "5.0",
+        "radius_km": "8.04672",
         "chemical": "arsenic",
         "detected_only": "0",
         "_limit": "21",
@@ -182,7 +182,7 @@ async def test_missing_warehouse_is_reported(monkeypatch):
     [
         {"zip_code": "94103'; DROP TABLE x;--"},
         {"zip_code": "9410"},
-        {"zip_code": "94103", "radius_km": 500},
+        {"zip_code": "94103", "radius_miles": 500},
         {"zip_code": "94103", "chemical": "x%"},
     ],
 )

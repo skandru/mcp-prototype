@@ -7,10 +7,10 @@ from fastmcp import FastMCP
 
 def register(mcp: FastMCP) -> None:
     @mcp.prompt(name="drinking_water_question")
-    def drinking_water_question(zip_code: str, radius_km: float = 10) -> str:
+    def drinking_water_question(zip_code: str, radius_miles: float = 10) -> str:
         """Ask what drinking water information exists near a ZIP code."""
         return (
-            f"What drinking water information is available within {radius_km} km "
+                f"What drinking water information is available within {radius_miles} miles "
             f"of ZIP code {zip_code}?\n\n"
             "Rules:\n"
             "1. Call waterboards_get_tap_water_for_zip for tap-water results "

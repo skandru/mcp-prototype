@@ -6,7 +6,12 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from waterboards_mcp.models import PaginationParams, RadiusKm, ZipCode
+from waterboards_mcp.models import (
+    KM_PER_MILE,
+    PaginationParams,
+    RadiusMiles,
+    ZipCode,
+)
 from waterboards_mcp.warehouse import Param, qualified_view, query_gold
 
 
@@ -23,7 +28,7 @@ def register(mcp: FastMCP) -> None:
     )
     async def find_water_systems_near_zip(
         zip_code: ZipCode,
-        radius_km: RadiusKm = 10,
+        radius_miles: RadiusMiles = 10,
         flagged_only: bool = False,
         pagination: PaginationParams | None = None,
     ) -> dict[str, Any]:
@@ -58,12 +63,12 @@ def register(mcp: FastMCP) -> None:
             order_by="distance_km ASC, pws_id ASC",
             params=[
                 Param("zip", zip_code),
-                Param("radius_km", radius_km, "DOUBLE"),
+                Param("radius_km", radius_miles * KM_PER_MILE, "DOUBLE"),
                 Param("flagged_only", int(flagged_only), "INT"),
             ],
             pagination=pagination,
             empty_hint=(
                 "No located water systems for this ZIP code and radius. Try a "
-                "nearby ZIP code or a larger radius_km, or turn off flagged_only."
+                "nearby ZIP code or a larger radius_miles, or turn off flagged_only."
             ),
         )

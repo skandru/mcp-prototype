@@ -6,7 +6,12 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from waterboards_mcp.models import PaginationParams, RadiusKm, ZipCode
+from waterboards_mcp.models import (
+    KM_PER_MILE,
+    PaginationParams,
+    RadiusMiles,
+    ZipCode,
+)
 from waterboards_mcp.warehouse import Param, qualified_view, query_gold
 
 
@@ -23,7 +28,7 @@ def register(mcp: FastMCP) -> None:
     )
     async def get_school_lead_near_zip(
         zip_code: ZipCode,
-        radius_km: RadiusKm = 10,
+        radius_miles: RadiusMiles = 10,
         exceedances_only: bool = False,
         pagination: PaginationParams | None = None,
     ) -> dict[str, Any]:
@@ -53,12 +58,12 @@ def register(mcp: FastMCP) -> None:
             order_by="distance_km ASC, last_observed DESC, school_name",
             params=[
                 Param("zip", zip_code),
-                Param("radius_km", radius_km, "DOUBLE"),
+                Param("radius_km", radius_miles * KM_PER_MILE, "DOUBLE"),
                 Param("exceedances_only", int(exceedances_only), "INT"),
             ],
             pagination=pagination,
             empty_hint=(
                 "No school lead results for this ZIP code and radius. Try a "
-                "nearby ZIP code or a larger radius_km."
+                "nearby ZIP code or a larger radius_miles."
             ),
         )
